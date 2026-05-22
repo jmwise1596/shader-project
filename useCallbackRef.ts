@@ -1,4 +1,4 @@
-useLayoutEffect, useCallback } from "react";
+import { useRef, useLayoutEffect, useCallback } from "react";
 
 /**
  * Returns a stable callback reference that always calls the latest version of the callback.
@@ -21,3 +21,4 @@ export function useCallbackRef<T extends (...args: any[]) => any>(
     [],
   ) as T;
 }
+
