@@ -23,80 +23,27 @@
             background: #1a1a1a;
         }
 
-        #canvas {
+        canvas {
             display: block;
             width: 100%;
             height: 100%;
-        }
-
-        .controls {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px;
-            border-radius: 8px;
-            font-size: 12px;
-            z-index: 100;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        body.dark .controls {
-            background: rgba(26, 26, 26, 0.9);
-            color: #f5f4f0;
-        }
-
-        .controls h3 {
-            margin-bottom: 10px;
-            font-size: 14px;
-        }
-
-        .controls p {
-            margin: 5px 0;
-            line-height: 1.4;
-        }
-
-        .controls button {
-            margin-top: 10px;
-            padding: 8px 12px;
-            background: #1a1a1a;
-            color: #f5f4f0;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-
-        body.dark .controls button {
-            background: #f5f4f0;
-            color: #1a1a1a;
-        }
-
-        .controls button:hover {
-            opacity: 0.8;
+            cursor: crosshair;
         }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
-    
-    <div class="controls">
-        <h3>Fluid Shader Engine</h3>
-        <p>🖱️ Click and drag to add dye</p>
-        <p>📱 Touch to interact</p>
-        <button onclick="toggleTheme()">Toggle Theme</button>
-    </div>
 
     <script>
         const canvas = document.getElementById('canvas');
-        const gl = canvas.getContext('webgl2', { antialias: true });
+        const gl = canvas.getContext('webgl2');
 
         if (!gl) {
-            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-size:24px;">WebGL 2 not supported</div>';
+            alert('WebGL 2 not supported');
             throw new Error('WebGL 2 not supported');
         }
 
-        // Set canvas size
+        // Resize canvas
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -105,208 +52,137 @@
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
 
-        // Shaders for the fluid simulation
-        const vertexShader = `#version 300 es
-            in vec2 position;
-            out vec2 uv;
-            void main() {
-                uv = position * 0.5 + 0.5;
-                gl_Position = vec4(position, 0.0, 1.0);
-            }`;
+        // Shaders
+        const vsSource = `#version 300 es
+        in vec2 pos;
+        out vec2 uv;
+        void main() {
+            uv = pos * 0.5 + 0.5;
+            gl_Position = vec4(pos, 0.0, 1.0);
+        }`;
 
-        const displayShader = `#version 300 es
-            precision highp float;
-            in vec2 uv;
-            out vec4 fragColor;
-            uniform sampler2D u_dye;
-            uniform sampler2D u_velocity;
-            
-            void main() {
-                vec3 dye = texture(u_dye, uv).rgb;
-                vec2 vel = texture(u_velocity, uv).rg;
-                
-                float d = length(dye);
-                float v = length(vel) * 0.5;
-                
-                // Metallic fluid effect
-                vec3 color = mix(
-                    vec3(0.05, 0.05, 0.06),
-                    mix(dye, vec3(0.8, 0.85, 0.9), 0.3),
-                    smoothstep(0.0, 0.2, d)
-                );
-                
-                // Add glow
-                color += dye * dye * 0.5;
-                
-                fragColor = vec4(color, 1.0);
-            }`;
+        const fsSource = `#version 300 es
+        precision highp float;
+        in vec2 uv;
+        out vec4 outColor;
+        uniform sampler2D tex;
+        
+        void main() {
+            vec3 col = texture(tex, uv).rgb;
+            outColor = vec4(col, 1.0);
+        }`;
 
-        const splatShader = `#version 300 es
-            precision highp float;
-            in vec2 uv;
-            out vec4 fragColor;
-            uniform sampler2D u_source;
-            uniform vec2 u_point;
-            uniform vec3 u_color;
-            uniform float u_radius;
-            uniform float u_aspect;
-            
-            void main() {
-                vec2 p = uv - u_point;
-                p.x *= u_aspect;
-                float splat = exp(-dot(p, p) / u_radius);
-                vec3 base = texture(u_source, uv).rgb;
-                fragColor = vec4(base + splat * u_color, 1.0);
-            }`;
-
-        // Compile shaders
-        function compileShader(source, type) {
+        // Compile shader
+        function compileShader(src, type) {
             const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
+            gl.shaderSource(shader, src);
             gl.compileShader(shader);
             if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                console.error('Shader error:', gl.getShaderInfoLog(shader));
+                console.error(gl.getShaderInfoLog(shader));
                 return null;
             }
             return shader;
         }
 
         // Create program
-        function createProgram(vsSrc, fsSrc) {
-            const vs = compileShader(vsSrc, gl.VERTEX_SHADER);
-            const fs = compileShader(fsSrc, gl.FRAGMENT_SHADER);
-            if (!vs || !fs) return null;
-            
-            const prog = gl.createProgram();
-            gl.attachShader(prog, vs);
-            gl.attachShader(prog, fs);
-            gl.linkProgram(prog);
-            
-            if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-                console.error('Program error:', gl.getProgramInfoLog(prog));
-                return null;
-            }
-            return prog;
+        const vs = compileShader(vsSource, gl.VERTEX_SHADER);
+        const fs = compileShader(fsSource, gl.FRAGMENT_SHADER);
+        const program = gl.createProgram();
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error(gl.getProgramInfoLog(program));
         }
 
-        // Create programs
-        const displayProgram = createProgram(vertexShader, displayShader);
-        const splatProgram = createProgram(vertexShader, splatShader);
+        gl.useProgram(program);
 
         // Create VAO
         const vao = gl.createVertexArray();
         gl.bindVertexArray(vao);
 
         const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-        const posBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
 
-        const posLoc = gl.getAttribLocation(displayProgram, 'position');
+        const posLoc = gl.getAttribLocation(program, 'pos');
         gl.enableVertexAttribArray(posLoc);
         gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-        // Create textures for dye and velocity
-        function createTexture(w, h) {
-            const tex = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            return tex;
-        }
+        // Create texture
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-        const dyeTexture = createTexture(canvas.width, canvas.height);
-        const velocityTexture = createTexture(canvas.width, canvas.height);
+        // Framebuffer
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
-        // Create framebuffers
-        function createFB(tex) {
-            const fb = gl.createFramebuffer();
-            gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-            return fb;
-        }
-
-        const dyeFB = createFB(dyeTexture);
-        const velocityFB = createFB(velocityTexture);
-
-        // Initialize with dark color
-        gl.bindFramebuffer(gl.FRAMEBUFFER, dyeFB);
+        // Initialize
         gl.clearColor(0.05, 0.05, 0.06, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
-        // Track cursor
-        let mouseX = 0.5;
-        let mouseY = 0.5;
-        let isMouseDown = false;
-        let lastX = 0.5;
-        let lastY = 0.5;
-
-        document.addEventListener('mousemove', (e) => {
-            mouseX = e.clientX / canvas.width;
-            mouseY = 1.0 - (e.clientY / canvas.height);
-        });
-
-        document.addEventListener('mousedown', () => {
-            isMouseDown = true;
-            lastX = mouseX;
-            lastY = mouseY;
-        });
-
-        document.addEventListener('mouseup', () => {
-            isMouseDown = false;
-        });
-
-        // Splat function
-        function splat(x, y, radius, r, g, b) {
-            gl.useProgram(splatProgram);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, dyeFB);
-            gl.bindVertexArray(vao);
+        // Paint function
+        function paint(x, y) {
+            x = x / canvas.width;
+            y = 1.0 - (y / canvas.height);
             
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, dyeTexture);
-            gl.uniform1i(gl.getUniformLocation(splatProgram, 'u_source'), 0);
+            const size = 20;
+            const data = new Uint8Array(size * size * 4);
+            for (let i = 0; i < size * size; i++) {
+                const dx = (i % size) - size / 2;
+                const dy = Math.floor(i / size) - size / 2;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const strength = Math.exp(-dist * dist / 20);
+                
+                data[i * 4 + 0] = Math.random() * 255 * strength;
+                data[i * 4 + 1] = Math.random() * 255 * strength;
+                data[i * 4 + 2] = Math.random() * 255 * strength;
+                data[i * 4 + 3] = 255;
+            }
             
-            gl.uniform2f(gl.getUniformLocation(splatProgram, 'u_point'), x, y);
-            gl.uniform3f(gl.getUniformLocation(splatProgram, 'u_color'), r, g, b);
-            gl.uniform1f(gl.getUniformLocation(splatProgram, 'u_radius'), radius);
-            gl.uniform1f(gl.getUniformLocation(splatProgram, 'u_aspect'), canvas.width / canvas.height);
-            
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 
+                Math.floor(x * canvas.width - size / 2),
+                Math.floor(y * canvas.height - size / 2),
+                size, size, gl.RGBA, gl.UNSIGNED_BYTE, data);
         }
+
+        // Input handling
+        let isDrawing = false;
+        canvas.addEventListener('mousedown', () => { isDrawing = true; });
+        canvas.addEventListener('mouseup', () => { isDrawing = false; });
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDrawing) paint(e.clientX, e.clientY);
+        });
+        canvas.addEventListener('touchstart', () => { isDrawing = true; });
+        canvas.addEventListener('touchend', () => { isDrawing = false; });
+        canvas.addEventListener('touchmove', (e) => {
+            if (isDrawing) paint(e.touches[0].clientX, e.touches[0].clientY);
+        });
 
         // Render loop
         function render() {
-            // Add dye at cursor if mouse is down
-            if (isMouseDown) {
-                const r = Math.random() * 0.5 + 0.5;
-                const g = Math.random() * 0.3 + 0.3;
-                const b = Math.random() * 0.7 + 0.2;
-                splat(mouseX, mouseY, 0.005, r, g, b);
-            }
-
-            // Display on screen
-            gl.useProgram(displayProgram);
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-            gl.bindVertexArray(vao);
-            
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, dyeTexture);
-            gl.uniform1i(gl.getUniformLocation(displayProgram, 'u_dye'), 0);
-            
-            gl.activeTexture(gl.TEXTURE1);
-            gl.bindTexture(gl.TEXTURE_2D, velocityTexture);
-            gl.uniform1i(gl.getUniformLocation(displayProgram, 'u_velocity'), 1);
-            
             gl.clearColor(0.05, 0.05, 0.06, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            gl.useProgram(program);
+            gl.bindVertexArray(vao);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.uniform1i(gl.getUniformLocation(program, 'tex'), 0);
+            
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-
             requestAnimationFrame(render);
         }
-
         render();
 
         function toggleTheme() {
